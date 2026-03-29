@@ -6716,6 +6716,7 @@
                 play(url) {
                     this.currentUrl = url;
                     this.playbackErrorCount = 0;  // 重置错误计数
+                    this._proxyRetried = false;    // 重置代理重试标记
 
                     // 🔆 播放时保持屏幕常亮
                     this.requestWakeLock();
@@ -6748,16 +6749,30 @@
                     }
 
                     const setupErrorHandling = () => {
-                        // 监听播放错误，自动切换到下一个可用线路
-                        dp.on('error', () => {
+                        // 统一错误处理函数（dp.error 和 video.error 都会触发）
+                        const handleError = (source) => {
+                            // 正在进行代理回退重试时，忽略所有错误（等待重试结果）
+                            if (this._proxyRetrying) {
+                                console.log('[播放器] ⏳ 代理回退中，忽略错误 (' + source + ')');
+                                return;
+                            }
+                            // 如果使用了广告过滤代理，先回退到直连重试
+                            if (adFilterProxyUsed && !this._proxyRetried) {
+                                this._proxyRetried = true;
+                                this._proxyRetrying = true;
+                                console.log('[播放器] 🛡️ 代理播放失败，回退直连:', originalUrl.substring(0, 60));
+                                dp.switchVideo({ url: originalUrl, type: 'hls' });
+                                // 3秒后解除锁定（足够 switchVideo 完成加载）
+                                setTimeout(() => { this._proxyRetrying = false; }, 3000);
+                                return;
+                            }
                             this.handlePlaybackError();
-                        });
+                        };
 
-                        // 监听 HLS 错误
+                        dp.on('error', () => handleError('dp'));
+
                         if (dp.video) {
-                            dp.video.addEventListener('error', () => {
-                                this.handlePlaybackError();
-                            });
+                            dp.video.addEventListener('error', () => handleError('video'));
                         }
                     };
 
